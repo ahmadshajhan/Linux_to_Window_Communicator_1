@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TigerChat — Personal Communicator</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        :root {
+            --bg: #0d0f14;
+            --surface: #151820;
+            --surface2: #1c2030;
+            --border: #2a2f42;
+            --accent: #00e5ff;
+            --accent2: #7c3aed;
+            --text: #e2e8f0;
+            --muted: #64748b;
+            --sent: #1a2744;
+            --received: #1c2030;
+            --success: #10b981;
+            --danger: #ef4444;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Syne', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Header */
+        header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .logo {
+            font-size: 1.3rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: var(--accent);
+        }
+
+        .logo span { color: var(--text); }
+
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            display: inline-block;
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .status-label {
+            font-size: 0.75rem;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Name bar */
+        .name-bar {
+            background: var(--surface2);
+            border-bottom: 1px solid var(--border);
+            padding: 10px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        .name-bar label {
+            font-size: 0.75rem;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+        }
+
+        .name-bar input {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            width: 200px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .name-bar input:focus { border-color: var(--accent); }
+
+        /* Chat area */
+        #chat {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            scroll-behavior: smooth;
+        }
+
+        #chat::-webkit-scrollbar { width: 4px; }
+        #chat::-webkit-scrollbar-track { background: transparent; }
+        #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        /* Message bubbles */
+        .msg-wrapper {
+            display: flex;
+            flex-direction: column;
+            max-width: 70%;
+            animation: fadeUp 0.2s ease;
+        }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .msg-wrapper.mine { align-self: flex-end; align-items: flex-end; }
+        .msg-wrapper.theirs { align-self: flex-start; align-items: flex-start; }
+
+        .msg-sender {
+            font-size: 0.7rem;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            margin-bottom: 4px;
+            padding: 0 4px;
+        }
+
+        .msg-bubble {
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 0.92rem;
+            line-height: 1.5;
+            word-break: break-word;
+            position: relative;
+        }
+
+        .mine .msg-bubble {
+            background: var(--sent);
+            border: 1px solid #2a3f6a;
+            border-bottom-right-radius: 3px;
+        }
+
+        .theirs .msg-bubble {
+            background: var(--received);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 3px;
+        }
+
+        .msg-time {
+            font-size: 0.65rem;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            margin-top: 4px;
+            padding: 0 4px;
+        }
+
+        /* File/image in chat */
+        .msg-image {
+            max-width: 280px;
+            max-height: 200px;
+            border-radius: 8px;
+            object-fit: cover;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            transition: transform 0.2s;
+        }
+        .msg-image:hover { transform: scale(1.02); }
+
+        .msg-file {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0,229,255,0.05);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 14px;
+            cursor: pointer;
+            text-decoration: none;
+            color: var(--text);
+            transition: border-color 0.2s;
+        }
+        .msg-file:hover { border-color: var(--accent); }
+
+        .msg-file-icon { font-size: 1.6rem; }
+
+        .msg-file-info { display: flex; flex-direction: column; }
+        .msg-file-name { font-size: 0.85rem; font-weight: 600; }
+        .msg-file-size { font-size: 0.7rem; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+
+        /* System messages */
+        .msg-system {
+            align-self: center;
+            font-size: 0.72rem;
+            color: var(--muted);
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Input area */
+        .input-area {
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            padding: 16px 24px;
+            flex-shrink: 0;
+        }
+
+        /* File preview bar */
+        #file-preview-bar {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin-bottom: 10px;
+        }
+
+        #file-preview-bar.visible { display: flex; }
+
+        #file-preview-thumb {
+            width: 40px; height: 40px;
+            border-radius: 6px;
+            object-fit: cover;
+            display: none;
+        }
+
+        #file-preview-icon { font-size: 1.8rem; display: none; }
+
+        #file-preview-name {
+            flex: 1;
+            font-size: 0.82rem;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        #file-preview-size {
+            font-size: 0.7rem;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        #remove-file {
+            background: none;
+            border: none;
+            color: var(--danger);
+            cursor: pointer;
+            font-size: 1.1rem;
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        #remove-file:hover { background: rgba(239,68,68,0.1); }
+
+        /* Message row */
+        .msg-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+        }
+
+        #messageInput {
+            flex: 1;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 11px 16px;
+            border-radius: 10px;
+            font-family: 'Syne', sans-serif;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s;
+            resize: none;
+            height: 44px;
+            line-height: 1.4;
+        }
+
+        #messageInput:focus { border-color: var(--accent); }
+
+        .icon-btn {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--muted);
+            width: 44px; height: 44px;
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            font-size: 1.2rem;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+        #sendBtn {
+            background: var(--accent);
+            border: none;
+            color: #000;
+            width: 44px; height: 44px;
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            font-size: 1.1rem;
+            font-weight: 700;
+            transition: all 0.2s;
+            flex-shrink: 0;
+        }
+        #sendBtn:hover { background: #00c4da; transform: scale(1.05); }
+        #sendBtn:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; transform: none; }
+
+        #fileInput { display: none; }
+
+        /* Upload progress */
+        #upload-progress {
+            display: none;
+            margin-bottom: 8px;
+        }
+
+        .progress-bar-wrap {
+            background: var(--border);
+            border-radius: 4px;
+            height: 4px;
+            overflow: hidden;
+        }
+
+        .progress-bar-fill {
+            background: var(--accent);
+            height: 100%;
+            width: 0%;
+            border-radius: 4px;
+            transition: width 0.2s;
+        }
+
+        /* Lightbox */
+        #lightbox {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            cursor: zoom-out;
+        }
+
+        #lightbox.open { display: flex; }
+        #lightbox img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
+
+        /* Toast */
+        #toast {
+            position: fixed;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-family: 'JetBrains Mono', monospace;
+            opacity: 0;
+            transition: all 0.3s;
+            z-index: 999;
+        }
+
+        #toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* Empty state */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--muted);
+            gap: 8px;
+        }
+
+        .empty-state .icon { font-size: 2.5rem; }
+        .empty-state p { font-size: 0.85rem; font-family: 'JetBrains Mono', monospace; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="logo">Tiger<span>Chat</span></div>
+    <div>
+        <span class="status-dot" id="statusDot" style="background: var(--muted);"></span>
+        <span class="status-label" id="statusLabel">connecting...</span>
+    </div>
+</header>
+
+<div class="name-bar">
+    <label>YOUR NAME →</label>
+    <input id="senderInput" type="text" placeholder="e.g. Tiger" maxlength="20" />
+    <span style="font-size:0.75rem; color:var(--muted); font-family:'JetBrains Mono',monospace;">
+        Max file: 50MB · Images, PDFs, Docs
+    </span>
+</div>
+
+<div id="chat">
+    <div class="empty-state" id="emptyState">
+        <div class="icon">💬</div>
+        <p>no messages yet. say something!</p>
+    </div>
+</div>
+
+<div class="input-area">
+    <div id="upload-progress">
+        <div style="font-size:0.72rem; color:var(--muted); font-family:'JetBrains Mono',monospace; margin-bottom:4px;" id="upload-label">Uploading...</div>
+        <div class="progress-bar-wrap">
+            <div class="progress-bar-fill" id="progress-fill"></div>
+        </div>
+    </div>
+
+    <div id="file-preview-bar">
+        <img id="file-preview-thumb" src="" alt="preview" />
+        <span id="file-preview-icon"></span>
+        <div style="flex:1; min-width:0;">
+            <div id="file-preview-name"></div>
+            <div id="file-preview-size"></div>
+        </div>
+        <button id="remove-file" title="Remove file">✕</button>
+    </div>
+
+    <div class="msg-row">
+        <input type="file" id="fileInput" accept="*/*" />
+        <button class="icon-btn" id="attachBtn" title="Attach file">📎</button>
+        <input id="messageInput" type="text" placeholder="Type a message..." />
+        <button id="sendBtn" disabled title="Send">➤</button>
+    </div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" onclick="closeLightbox()">
+    <img id="lightbox-img" src="" alt="" />
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<script>
+    // ── State ──────────────────────────────────────────────────────────
+    let stompClient = null;
+    let selectedFile = null;
+    const myName = () => document.getElementById('senderInput').value.trim() || 'Anonymous';
+
+    // ── STOMP Connect ──────────────────────────────────────────────────
+    function connect() {
+        const socket = new SockJS('/chat');
+        stompClient = Stomp.over(socket);
+        stompClient.debug = null; // silence logs
+
+        stompClient.connect({}, function (frame) {
+            setStatus(true);
+            loadHistory(); // load chat history on connect
+
+            stompClient.subscribe('/topic/messages', function (message) {
+                const data = JSON.parse(message.body);
+                if (data && data.content !== undefined) {
+                    renderMessage(data);
+                    saveToHistory(data);
+                }
+            });
+        }, function () {
+            setStatus(false);
+            setTimeout(connect, 3000); // auto reconnect
+        });
+    }
+
+    function setStatus(connected) {
+        const dot = document.getElementById('statusDot');
+        const label = document.getElementById('statusLabel');
+        document.getElementById('sendBtn').disabled = !connected;
+        if (connected) {
+            dot.style.background = 'var(--success)';
+            label.textContent = 'connected';
+        } else {
+            dot.style.background = 'var(--danger)';
+            label.textContent = 'disconnected — retrying...';
+        }
+    }
+
+    // ── LocalStorage History ───────────────────────────────────────────
+    const HISTORY_KEY = 'tigerchat_history';
+    const MAX_HISTORY = 200;
+
+    function saveToHistory(msg) {
+        try {
+            let history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+            history.push(msg);
+            if (history.length > MAX_HISTORY) history = history.slice(-MAX_HISTORY);
+            localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+        } catch(e) {}
+    }
+
+    function loadHistory() {
+        try {
+            const history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+            if (history.length === 0) return;
+            history.forEach(msg => renderMessage(msg, true));
+            showToast(`Loaded ${history.length} previous messages`);
+        } catch(e) {}
+    }
+
+    function clearHistory() {
+        localStorage.removeItem(HISTORY_KEY);
+        document.getElementById('chat').innerHTML = '';
+        showEmptyState();
+        showToast('Chat history cleared');
+    }
+
+    // ── Render Messages ────────────────────────────────────────────────
+    function showEmptyState() {
+        const chat = document.getElementById('chat');
+        if (!chat.querySelector('.msg-wrapper') && !chat.querySelector('.msg-system')) {
+            if (!chat.querySelector('.empty-state')) {
+                chat.innerHTML = '<div class="empty-state" id="emptyState"><div class="icon">💬</div><p>no messages yet. say something!</p></div>';
+            }
+        }
+    }
+
+    function removeEmptyState() {
+        const es = document.getElementById('emptyState');
+        if (es) es.remove();
+    }
+
+    function renderMessage(msg, isHistory = false) {
+        removeEmptyState();
+        const chat = document.getElementById('chat');
+        const isMine = msg.sender === myName();
+        const time = msg.time ? new Date(msg.time) : new Date();
+        const timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        // System messages
+        if (msg.type === 'JOIN' || msg.type === 'LEAVE') {
+            const el = document.createElement('div');
+            el.className = 'msg-system';
+            el.textContent = msg.type === 'JOIN'
+                ? `${msg.sender} joined the chat`
+                : `${msg.sender} left the chat`;
+            chat.appendChild(el);
+            scrollBottom();
+            return;
+        }
+
+        const wrapper = document.createElement('div');
+        wrapper.className = `msg-wrapper ${isMine ? 'mine' : 'theirs'}`;
+
+        const senderEl = document.createElement('div');
+        senderEl.className = 'msg-sender';
+        senderEl.textContent = msg.sender;
+        wrapper.appendChild(senderEl);
+
+        const bubble = document.createElement('div');
+        bubble.className = 'msg-bubble';
+
+        // File message
+        if (msg.fileUrl) {
+            const ext = (msg.fileName || '').split('.').pop().toLowerCase();
+            const isImage = ['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext);
+            const isPdf = ext === 'pdf';
+
+            if (isImage) {
+                const img = document.createElement('img');
+                img.className = 'msg-image';
+                img.src = msg.fileUrl;
+                img.alt = msg.fileName;
+                img.onclick = () => openLightbox(msg.fileUrl);
+                bubble.appendChild(img);
+            } else {
+                const link = document.createElement('a');
+                link.className = 'msg-file';
+                link.href = msg.fileUrl;
+                link.target = '_blank';
+                link.download = msg.fileName;
+
+                const icon = document.createElement('span');
+                icon.className = 'msg-file-icon';
+                icon.textContent = isPdf ? '📄' : getFileIcon(ext);
+
+                const info = document.createElement('div');
+                info.className = 'msg-file-info';
+
+                const name = document.createElement('span');
+                name.className = 'msg-file-name';
+                name.textContent = msg.fileName || 'file';
+
+                const size = document.createElement('span');
+                size.className = 'msg-file-size';
+                size.textContent = msg.fileSize ? formatSize(msg.fileSize) : '';
+
+                info.appendChild(name);
+                info.appendChild(size);
+                link.appendChild(icon);
+                link.appendChild(info);
+                bubble.appendChild(link);
+            }
+
+            // Caption text if any
+            if (msg.content && msg.content.trim()) {
+                const caption = document.createElement('div');
+                caption.style.cssText = 'margin-top:6px; font-size:0.88rem;';
+                caption.textContent = msg.content;
+                bubble.appendChild(caption);
+            }
+        } else {
+            bubble.textContent = msg.content;
+        }
+
+        wrapper.appendChild(bubble);
+
+        const timeEl = document.createElement('div');
+        timeEl.className = 'msg-time';
+        timeEl.textContent = timeStr;
+        wrapper.appendChild(timeEl);
+
+        chat.appendChild(wrapper);
+        scrollBottom();
+    }
+
+    function scrollBottom() {
+        const chat = document.getElementById('chat');
+        chat.scrollTop = chat.scrollHeight;
+    }
+
+    // ── Send Text ──────────────────────────────────────────────────────
+    function sendMessage() {
+        if (!stompClient) return;
+        const content = document.getElementById('messageInput').value.trim();
+
+        if (selectedFile) {
+            uploadAndSend(content);
+            return;
+        }
+
+        if (!content) return;
+
+        const msg = {
+            sender: myName(),
+            content: content,
+            type: 'CHAT',
+            time: new Date().toISOString()
+        };
+
+        stompClient.send('/app/sendMessage', {}, JSON.stringify(msg));
+        document.getElementById('messageInput').value = '';
+    }
+
+    // ── File Upload ────────────────────────────────────────────────────
+    function uploadAndSend(caption) {
+        if (!selectedFile) return;
+
+        const formData = new FormData();
+        formData.append('file', selectedFile);
+        formData.append('sender', myName());
+        formData.append('caption', caption || '');
+
+        // Show progress
+        const progress = document.getElementById('upload-progress');
+        const fill = document.getElementById('progress-fill');
+        const uploadLabel = document.getElementById('upload-label');
+        progress.style.display = 'block';
+        fill.style.width = '0%';
+        uploadLabel.textContent = `Uploading ${selectedFile.name}...`;
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/upload', true);
+
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+                const pct = Math.round((e.loaded / e.total) * 100);
+                fill.style.width = pct + '%';
+                uploadLabel.textContent = `Uploading... ${pct}%`;
+            }
+        };
+
+        xhr.onload = () => {
+            progress.style.display = 'none';
+            if (xhr.status === 200) {
+                const res = JSON.parse(xhr.responseText);
+                const msg = {
+                    sender: myName(),
+                    content: caption || '',
+                    fileUrl: res.fileUrl,
+                    fileName: res.fileName,
+                    fileSize: res.fileSize,
+                    type: 'CHAT',
+                    time: new Date().toISOString()
+                };
+                stompClient.send('/app/sendMessage', {}, JSON.stringify(msg));
+                clearFile();
+                document.getElementById('messageInput').value = '';
+            } else {
+                showToast('Upload failed. Try again.');
+            }
+        };
+
+        xhr.onerror = () => {
+            progress.style.display = 'none';
+            showToast('Upload error. Check connection.');
+        };
+
+        xhr.send(formData);
+    }
+
+    // ── File Selection ─────────────────────────────────────────────────
+    document.getElementById('attachBtn').onclick = () => {
+        document.getElementById('fileInput').click();
+    };
+
+    document.getElementById('fileInput').onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        if (file.size > 50 * 1024 * 1024) {
+            showToast('File too large. Max 50MB.');
+            return;
+        }
+
+        selectedFile = file;
+        const bar = document.getElementById('file-preview-bar');
+        const thumb = document.getElementById('file-preview-thumb');
+        const icon = document.getElementById('file-preview-icon');
+        const nameEl = document.getElementById('file-preview-name');
+        const sizeEl = document.getElementById('file-preview-size');
+
+        nameEl.textContent = file.name;
+        sizeEl.textContent = formatSize(file.size);
+
+        const ext = file.name.split('.').pop().toLowerCase();
+        const isImage = ['jpg','jpeg','png','gif','webp','bmp'].includes(ext);
+
+        if (isImage) {
+            thumb.style.display = 'block';
+            icon.style.display = 'none';
+            const reader = new FileReader();
+            reader.onload = (ev) => { thumb.src = ev.target.result; };
+            reader.readAsDataURL(file);
+        } else {
+            thumb.style.display = 'none';
+            icon.style.display = 'block';
+            icon.textContent = getFileIcon(ext);
+        }
+
+        bar.classList.add('visible');
+        document.getElementById('fileInput').value = '';
+    };
+
+    document.getElementById('remove-file').onclick = clearFile;
+
+    function clearFile() {
+        selectedFile = null;
+        document.getElementById('file-preview-bar').classList.remove('visible');
+        document.getElementById('file-preview-thumb').src = '';
+        document.getElementById('file-preview-icon').textContent = '';
+    }
+
+    // ── Enter key ──────────────────────────────────────────────────────
+    document.getElementById('messageInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
+    });
+
+    document.getElementById('sendBtn').onclick = sendMessage;
+
+    // ── Helpers ────────────────────────────────────────────────────────
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function getFileIcon(ext) {
+        const map = {
+            pdf: '📄', doc: '📝', docx: '📝', txt: '📃',
+            xls: '📊', xlsx: '📊', csv: '📊',
+            ppt: '📑', pptx: '📑',
+            zip: '🗜️', rar: '🗜️', gz: '🗜️',
+            mp3: '🎵', wav: '🎵', ogg: '🎵',
+            mp4: '🎬', mkv: '🎬', avi: '🎬',
+            exe: '⚙️', apk: '📱', sh: '🖥️',
+        };
+        return map[ext] || '📁';
+    }
+
+    function openLightbox(src) {
+        document.getElementById('lightbox-img').src = src;
+        document.getElementById('lightbox').classList.add('open');
+    }
+
+    function closeLightbox() {
+        document.getElementById('lightbox').classList.remove('open');
+    }
+
+    function showToast(msg, duration = 3000) {
+        const toast = document.getElementById('toast');
+        toast.textContent = msg;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), duration);
+    }
+
+    // ── Init ───────────────────────────────────────────────────────────
+    window.onload = connect;
+</script>
+</body>
+</html>
